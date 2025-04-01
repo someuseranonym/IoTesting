@@ -31,8 +31,8 @@ class VendorLookup:
             return None
     def get_vendor_by_mac(self, mac_address):
         try:
-            vendor = mac_vendor_lookup.MacLookup().lookup("00:1A:1E:07:BF:06")
-        except mac_vendor_lookup.exceptions.MacLookupError as e:
+            vendor = mac_vendor_lookup.MacLookup().lookup(mac_address)
+        except:
             pass
     def find_vendors(self, ip_mac_list):
         """Takes list of MAC and IP and returns updated dict"""
