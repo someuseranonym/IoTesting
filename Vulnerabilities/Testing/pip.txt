@@ -1,0 +1,3 @@
+pip install hbmqtt
+pip install pyftpdlib
+C:\>python smtp_server.py

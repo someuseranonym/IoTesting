@@ -87,6 +87,32 @@ bash
 Если все настроено правильно, вы увидите сообщение "Hello World".
 '''
 
+    def check_mqtt_publish_subscribe(ip):
+        """
+        Проверяет, возможно ли публиковать сообщения и подписываться на топики в MQTT.
+        :param ip: IP-адрес устройства
+        :return: True, если публикация и подписка возможны, иначе False
+        """
+        received_message = False
+
+        def on_message(client, userdata, message):
+            """Обработчик сообщений MQTT."""
+            nonlocal received_message
+            if message.payload.decode() == "Test Message":
+                received_message = True
+
+        client = mqtt.Client()
+        try:
+            client.connect(ip, 1883, 60)  # Подключение к MQTT-брокеру
+            client.loop_start()  # Запуск цикла обработки сообщений
+            client.subscribe("test/topic")  # Подписка на топик
+            client.publish("test/topic", "Test Message")  # Публикация сообщения
+            client.on_message = on_message  # Установка обработчика сообщений
+            time.sleep(2)  # Ожидание доставки сообщения
+            client.loop_stop()  # Остановка цикла обработки сообщений
+            return received_message
+        finally:
+            client.disconnect()
     def check_for_device(self, device):
         pass
 

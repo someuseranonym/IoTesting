@@ -31,6 +31,19 @@ class SMTPUserEnumeration(Vulnerability):
 
 '''
 
+    def check_zigbee_insecure_keys(pcap_file):
+        """
+        Проверяет, передаются ли ключи ZigBee в незашифрованном виде.
+        :param pcap_file: Путь к файлу с захваченным трафиком ZigBee
+        :return: True, если ключи передаются в открытом виде, иначе False
+        """
+        kb = KillerBee()
+        kb.load_file(pcap_file)  # Загрузка файла с трафиком
+        for packet in kb.packets:
+            if packet.is_aps() and packet.aps_command == 0x05:  # Проверка APS-команды Transport Key
+                if packet.payload and b'\x00' in packet.payload:  # Проверка на открытый ключ
+                    return True
+        return False
     def check_for_device(self, device):
         pass
 

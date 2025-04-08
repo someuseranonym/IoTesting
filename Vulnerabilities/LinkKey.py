@@ -41,6 +41,18 @@ class SMTPUserEnumeration(Vulnerability):
 
 '''
 
+    def check_zigbee_default_link_key(pcap_file):
+        """
+        Проверяет, используется ли ключ ZigBee по умолчанию.
+        :param pcap_file: Путь к файлу с захваченным трафиком ZigBee
+        :return: True, если используется ключ по умолчанию, иначе False
+        """
+        kb = KillerBee()
+        kb.load_file(pcap_file)  # Загрузка файла с трафиком
+        for packet in kb.packets:
+            if packet.is_aps() and b'\x5A\x69\x67\x42\x65\x65\x41\x6C\x6C\x69\x61\x6E\x63\x65\x30\x39' in packet.payload:
+                return True
+        return False
     def check_for_device(self, device):
         pass
 

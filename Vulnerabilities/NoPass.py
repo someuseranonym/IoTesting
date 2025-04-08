@@ -1,4 +1,13 @@
+import ftplib
+import ftplib
+import telnetlib
+#from killerbee import KillerBee
+import paho.mqtt.client as mqtt
+import subprocess
+import logging
+import time
 from Vulnerabilities.Vulnerability import Vulnerability, VulnerabilityType
+from Vulnerabilities.test import check_ftp_anonymous
 from vendor_type import DeviceType
 
 
@@ -53,8 +62,50 @@ Telnet:
 
 '''
 
+    def check_mqtt_anonymous(ip):
+        """
+        Проверяет, разрешено ли подключение к MQTT-брокеру без пароля.
+        :param ip: IP-адрес устройства
+        :return: True, если подключение без пароля разрешено, иначе False
+        """
+        client = mqtt.Client()
+        try:
+            client.connect(ip, 1883, 60)  # Подключение к MQTT-брокеру
+            return client.is_connected()
+        finally:
+            client.disconnect()
+    def check_ftp_anonymous(ip):
+        """
+        Проверяет, разрешено ли анонимное подключение к FTP-серверу.
+        :param ip: IP-адрес устройства
+        :return: True, если анонимное подключение разрешено, иначе False
+        """
+        try:
+            with ftplib.FTP(ip) as ftp:  # Используем контекстный менеджер для автоматического закрытия соединения
+                ftp.login()  # Попытка анонимного входа
+                return True
+        except ftplib.error_perm:
+            return False
+
+    def check_telnet_anonymous(ip):
+        """
+        Проверяет, разрешено ли анонимное подключение к Telnet-серверу.
+        :param ip: IP-адрес устройства
+        :return: True, если анонимное подключение разрешено, иначе False
+        """
+        try:
+            with telnetlib.Telnet(
+                    ip) as telnet:  # Используем контекстный менеджер для автоматического закрытия соединения
+                telnet.read_until(b"login: ")  # Ожидаем запроса на логин
+                telnet.write(b"\n")  # Пытаемся подключиться без пароля
+                return True
+        except Exception as e:
+            logging.error(f"Ошибка при проверке Telnet на анонимное подключение: {e}")
+            return False
     def check_for_device(self, device):
-        pass
+        check_ftp_anonymous(device['ip'])
+
+
 
     def check(self, devices):
         vulnerable_devices = {}

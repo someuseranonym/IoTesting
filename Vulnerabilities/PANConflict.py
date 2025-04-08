@@ -43,6 +43,22 @@ class SMTPUserEnumeration(Vulnerability):
 
 '''
 
+    def check_zigbee_pan_conflict(pcap_file):
+        """
+        Проверяет, есть ли конфликт PAN ID в сети ZigBee.
+        :param pcap_file: Путь к файлу с захваченным трафиком ZigBee
+        :return: True, если обнаружен конфликт, иначе False
+        """
+        kb = KillerBee()
+        kb.load_file(pcap_file)  # Загрузка файла с трафиком
+        pan_ids = set()
+        for packet in kb.packets:
+            if packet.is_beacon():  # Проверка на beacon-фреймы
+                pan_id = packet.pan_id
+                if pan_id in pan_ids:
+                    return True  # Обнаружен конфликт PAN ID
+                pan_ids.add(pan_id)
+        return False
     def check_for_device(self, device):
         pass
 
