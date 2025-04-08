@@ -2,12 +2,24 @@ import asyncio
 import ftplib
 import socket
 import telnetlib
-from pysnmp.hlapi import *
-import pysnmp
+import time
+
+from pysnmp.hlapi import getCmd, SnmpEngine, CommunityData, UdpTransportTarget, ContextData, ObjectType, ObjectIdentity
+import requests
+from requests.auth import HTTPBasicAuth
+import socket
+import ssl
+import requests
+from requests.auth import HTTPBasicAuth
+import subprocess
+import warnings
+from urllib3.exceptions import InsecureRequestWarning
 import requests
 from pysnmp.entity.engine import SnmpEngine
 from pysnmp.hlapi.v3arch import ContextData, UdpTransportTarget, CommunityData
 from pysnmp.smi.rfc1902 import ObjectType, ObjectIdentity
+from requests.auth import HTTPBasicAuth
+
 from Vulnerabilities.Vulnerability import *
 from TypeGetter import *
 import paramiko
@@ -74,79 +86,138 @@ def brute_force_ssh(device, usernames, passwords):
 
     print("[-] Учетные данные не найдены в заданных списках.")
 
+def check_ssl(target_ip, port):
+        """Проверка SSL-сертификата"""
+        context = ssl.create_default_context()
+        context.check_hostname = False
+        context.verify_mode = ssl.CERT_NONE
 
-def brute_force_http(device, port, usernames, passwords, success_string):
+        try:
+            with socket.create_connection((target_ip, port), timeout=3) as sock:
+                with context.wrap_socket(sock, server_hostname=target_ip) as ssock:
+                    cert = ssock.getpeercert()
+                    print(f"\n🔐 SSL-сертификат на порту {port}:")
+                    print(f" - Субъект: {dict(x[0] for x in cert['subject'])}")
+                    print(f" - Действителен до: {cert['notAfter']}")
+                    print(f" - Издатель: {dict(x[0] for x in cert['issuer'])}")
+                    return True
+        except Exception as e:
+            print(f"⚠️ Ошибка SSL на порту {port}: {str(e)}")
+            return False
+def check_https_vulnerabilities(target_ip, username, password):
+        """Проверка уязвимостей HTTPS"""
+        print(f"\n🔍 Проверка HTTPS на {target_ip}...")
+        SSL_PORTS = [443, 8443, 9443]
+        for port in SSL_PORTS:
+            try:
+                url = f"https://{target_ip}:{port}"
+                print(f"\nПроверка {url}...")
+
+                # Проверка доступности
+                response = requests.get(url,
+                                        auth=HTTPBasicAuth(username, password),
+                                        verify=False,
+                                        timeout=3)
+
+                if response.status_code == 200:
+                    print(f"⚠️ HTTPS-интерфейс доступен на порту {port}")
+                    check_ssl(target_ip, port)
+
+                    # Дополнительные проверки
+                    tests = [
+                        ("Конфигурация", "/system-config.ini"),
+                        ("Статус", "/cgi-bin/status"),
+                        ("Обновление", "/firmware-upgrade")
+                    ]
+
+                    for test_name, path in tests:
+                        try:
+                            test_url = f"{url}{path}"
+                            resp = requests.get(test_url, verify=False, timeout=2)
+                            if resp.status_code == 200:
+                                print(f"   ‼️ Доступен потенциально опасный путь: {path}")
+                        except:
+                            continue
+            except Exception as e:
+                print(f"   {str(e)}")
+                continue
+def check_default_credentials(ip, username, password):
+    """Проверка стандартных учетных данных"""
+    print("\n🔐 Проверка стандартных паролей...")
+    urls_to_check = [
+        f"http://{ip}/",
+        f"http://{ip}/cgi-bin/userConfig.cgi",
+        f"http://{ip}/config.html"
+    ]
+
+    for url in urls_to_check:
+        try:
+            response = requests.get(url, auth=HTTPBasicAuth(username, password), timeout=3)
+            print(response.text)
+            if response.status_code == 200:
+                print(f"⚠️ Уязвимость: стандартный пароль работает на {url}", username, password)
+                check_https_vulnerabilities(ip, username, password)
+
+                return True
+        except:
+            continue
+
+    print("✅ Стандартные пароли не работают (или веб-интерфейс недоступен)")
+    return False
+
+def brute_force_http(device, usernames, passwords):
     """
     Выполняет брутфорс HTTP-аутентификации, перебирая имена пользователей и пароли.
     """
     print('http bruteforce')
-    url = f"http://{device['ip']}:{port}"
     i = 1
 
     for username in usernames:
         for password in passwords:
-            data = {'username': username, 'password': password}
-            try:
-                time.sleep(0.7)
-                response = requests.post(url, data=data, timeout=5)  # Добавляем timeout
-                if response.status_code == 200:
-                    print(f"Success! Username: {username}, password: {password}")
+            res = check_default_credentials(device['ip'], username, password)
+            if res:
+                print('weak password', username, password, device['ip'])
 
-                    # Дальнейшая проверка (очень важна!)
-                    if 'Logout' in response.text:
-                        print("Успешная аутентификация (по наличию Logout)")
-
-                    else:
-                        print("Код 200, но признаков успешной аутентификации нет. Требуется дальнейший анализ!")
-                        #return False  # Или продолжить перебор
-                else:
-                    print(f"Failed. Status code: {response.status_code if response else 'No response'}")
-
-                #print(f"[-] Неудачная попытка: Username: {username}, Пароль: {password}")
-            except requests.exceptions.RequestException as e:  # Обрабатываем исключения
-                print(f"[!] Ошибка соединения: {e}")
                 return
-            i+=1
-
-    print("[-] Пароль не найден в заданных списках.")
 
 
-def brute_force_snmp(wordlist, snmp_version, ip, port, timeout):
-    v_arg = 1 if '2c' == snmp_version else 0
+def brute_force_snmp(wordlist, snmp_version, ip, port, timeout=1):
+    v_arg = 1 if snmp_version == '2c' else 0  # 1 for SNMPv2c, 0 for v1
 
-    print(f'Starting SNMPv{snmp_version} bruteforce')
+    print(f'Starting SNMPv{snmp_version} bruteforce on {ip}:{port}')
 
     with open(wordlist, 'r') as in_file:
-        communities = in_file.read().splitlines()
+        communities = [line.strip() for line in in_file if line.strip()]
 
-    for com in tqdm(communities):
-        time.sleep(0.2)
+    for com in tqdm(communities, desc="Testing communities"):
+        time.sleep(0.2)  # Чтобы не перегружать устройство
 
-        # Используем getCmdGen вместо getCmd
-        g = getCmdGen()
-
-        # Передаем аргументы в g.getCmd
         errorIndication, errorStatus, errorIndex, varBinds = next(
-            g.getCmd(
+            getCmd(
                 SnmpEngine(),
                 CommunityData(com, mpModel=v_arg),
-                UdpTransportTarget((ip, port), timeout=timeout, retries=0),
+                UdpTransportTarget((ip, port), timeout=timeout, retries=1),
                 ContextData(),
-                ObjectType(ObjectIdentity('SNMPv2-MIB', 'sysDescr', 0))
+                ObjectType(ObjectIdentity('1.3.6.1.2.1.1.1.0'))  # sysDescr как OID
             )
         )
 
+        # Обработка ответа
         if errorIndication:
-            pass
-            # print(errorIndication)
-
+            tqdm.write(f"'{com}': Error - {errorIndication}")
+            continue
         elif errorStatus:
-            pass
-            # print('%s at %s' % (errorStatus.prettyPrint(),errorIndex and varBinds[int(errorIndex) - 1][0] or '?'))
-        else:
-            tqdm.write(f"Found community name {com} !")
-            for varBind in varBinds:
-                tqdm.write(' = '.join([x.prettyPrint() for x in varBind]))
+            tqdm.write(f"'{com}': Auth failed - {errorStatus.prettyPrint()}")
+            continue
+
+        # Успешный ответ
+        tqdm.write(f"\n[+] Found community: '{com}'")
+        for varBind in varBinds:
+            tqdm.write(f"Response: {' = '.join([x.prettyPrint() for x in varBind])}")
+        return com  # Возвращаем найденное community
+
+    print("\n[!] No valid communities found")
+    return None
 
 
 def on_connect(client, userdata, flags, rc):
@@ -300,6 +371,78 @@ def check_ftp_credentials(ip, port, usernames, passwords, timeout=5):
         return f"FTP check error: {e}"
 
 
+def check_default_credentials2(ip, username, password):
+    """Проверка учетных данных с подробным анализом ответа"""
+    print(f"\n🔐 Проверка учетных данных на {ip}...")
+    print(f"Используемые credentials: {username}:{password}")
+
+    urls_to_check = [
+        f"http://{ip}/",
+        f"http://{ip}/cgi-bin/userConfig.cgi",
+        f"http://{ip}/config.html",
+        f"http://{ip}/cgi-bin/param.cgi",
+        f"http://{ip}/cgi-bin/viewer/video.jpg",
+        f"http://{ip}/video.mjpg",
+        f"http://{ip}/snapshot.jpg"
+    ]
+
+    success_urls = []
+
+    for url in urls_to_check:
+        try:
+            print(f"\nПроверяем URL: {url}")
+
+            # Неаутентифицированный запрос
+            unauth_response = requests.get(url, timeout=5, verify=False)
+            print(f"Код ответа без аутентификации: {unauth_response.status_code}")
+            print(f"Длина ответа: {len(unauth_response.content)} байт")
+
+            # Аутентифицированный запрос
+            auth_response = requests.get(url, auth=HTTPBasicAuth(username, password), timeout=5, verify=False)
+            print(f"Код ответа с аутентификацией: {auth_response.status_code}")
+            print(f"Длина ответа: {len(auth_response.content)} байт")
+
+            # Анализ ответов
+            if auth_response.status_code == 200:
+                # Критерий 1: Изменение кода состояния
+                if unauth_response.status_code == 401 and auth_response.status_code == 200:
+                    print("⚡ Обнаружено: 401 -> 200 при аутентификации")
+                    success_urls.append(url)
+                    continue
+
+                # Критерий 2: Анализ содержимого
+                content = auth_response.text.lower() if auth_response.text else ""
+                if ("login" not in content and
+                        "password" not in content and
+                        "unauthorized" not in content):
+                    print("⚡ Обнаружено: нет ключевых слов аутентификации в ответе")
+                    success_urls.append(url)
+                    continue
+
+                # Критерий 3: Размер ответа
+                if len(auth_response.content) > len(unauth_response.content) + 500:
+                    print("⚡ Обнаружено: значительное увеличение размера ответа")
+                    success_urls.append(url)
+                    continue
+
+                # Критерий 4: Проверка изображений
+                if 'image' in auth_response.headers.get('Content-Type', ''):
+                    print("⚡ Обнаружено: получено изображение после аутентификации")
+                    success_urls.append(url)
+                    continue
+
+        except requests.exceptions.RequestException as e:
+            print(f"Ошибка при запросе: {str(e)}")
+            continue
+
+    if success_urls:
+        print("\n⚠️ Уязвимость: следующие URL доступны с указанными учетными данными:")
+        for url in success_urls:
+            print(f"- {url}")
+        return True
+    else:
+        print("\n✅ Учетные данные не дали доступа к проверяемым URL")
+        return False
 class WeakPassword(Vulnerability):
     def __init__(self):
         """
@@ -319,37 +462,39 @@ class WeakPassword(Vulnerability):
 
     def check_for_device(self, device, usernames, passwords):
         print('check', device['mac'], device['type'])
-
+        snmp_path = 'Vulnerabilities/WordLists/snmp_comms.txt'
         if device['type'] in [DeviceType.light_switch, DeviceType.Lamp, DeviceType.Counter, DeviceType.Socket]:
-            brute_force_http(device, 80, usernames, passwords, "200")
+            brute_force_http(device, usernames, passwords)
             brute_force_mqtt(device, 1883, usernames, passwords)
             check_ftp_credentials(device['ip'], 21, usernames, passwords)
             check_telnet_credentials(device['ip'], 23, usernames, passwords)
         match device['type']:
             case DeviceType.Camera:
                 brute_force_ssh(device, usernames, passwords)
-                brute_force_http(device, 80, usernames, passwords, "success")
-                #brute_force_snmp('Vulnerabilities/WordLists/snmp_wordlist.txt', '1', device['ip'], 22, 2)
-                #brute_force_snmp('Vulnerabilities/WordLists/snmp_wordlist.txt', '2c', device['ip'], 22, 2)
+                check_default_credentials2(device['ip'], 'admin', 'admin')
+                check_default_credentials2(device['ip'], 'user', '1')
+                #brute_force_http(device, usernames, passwords)
+                brute_force_snmp(snmp_path, '1', device['ip'], 22, 2)
+                brute_force_snmp(snmp_path, '2c', device['ip'], 22, 2)
             case DeviceType.Printer:
-                brute_force_http(device, 80, usernames, passwords, "200")
-                brute_force_snmp('Vulnerabilities/WordLists/snmp_wordlist.txt', '1', device['ip'], 22, 2)
-                brute_force_snmp('Vulnerabilities/WordLists/snmp_wordlist.txt', '2c', device['ip'], 22, 2)
+                brute_force_http(device, usernames, passwords)
+                brute_force_snmp(snmp_path, '1', device['ip'], 22, 2)
+                brute_force_snmp(snmp_path, '2c', device['ip'], 22, 2)
             case DeviceType.Thermostat:
                 brute_force_ssh(device, usernames, passwords)
-                brute_force_http(device, 80, usernames, passwords, "200")
+                brute_force_http(device,  usernames, passwords)
                 brute_force_mqtt(device, 1883, usernames, passwords)
             case DeviceType.Sensor:
-                brute_force_http(device, 80, usernames, passwords, "200")
+                brute_force_http(device, usernames, passwords)
                 brute_force_mqtt(device, 1883, usernames, passwords)
-                brute_force_snmp('./WordLists/snmp_wordlist.txt', '1', device['ip'], 22, 2)
-                brute_force_snmp('./WordLists/snmp_wordlist.txt', '2c', device['ip'], 22, 2)
+                brute_force_snmp(snmp_path,'1', device['ip'], 22, 2)
+                brute_force_snmp(snmp_path,'2c', device['ip'], 22, 2)
             case _:  # Default case (wildcard pattern)
                 pass
 
     def check(self, devices):
-        username_file = 'Vulnerabilities/WordLists/username.txt'
-        passwords_file = ['Vulnerabilities/WordLists/rockyou2.txt']
+        username_file = '/home/mint/PycharmProjects/IoTesting/Vulnerabilities/WordLists/usernames.txt'
+        passwords_file ='/home/mint/PycharmProjects/IoTesting/Vulnerabilities/WordLists/rockyou.txt'
         usernames = []
         passwords = []
         try:
@@ -357,8 +502,7 @@ class WeakPassword(Vulnerability):
                 usernames1 = [line.strip() for line in f]
                 for i in usernames1:
                     usernames.append(i)
-            for i in passwords_file:
-                with open(i, 'r', encoding='utf-8') as f:
+            with open(passwords_file, 'r', encoding='utf-8', errors='ignore') as f:
                     passwords1 = [line.strip() for line in f]
                     for i in passwords1:
                         passwords.append(i)
@@ -366,9 +510,14 @@ class WeakPassword(Vulnerability):
             print(f"Ошибка: Файл не найден: {e}")
             return
         vulnerable_devices = {}
+        print(devices)
         for i in devices:
-            cur = self.check_for_device(i, usernames, passwords)
-            if cur:
-                if i['mac'] in vulnerable_devices:
-                    vulnerable_devices[i['mac']].append(VulnerabilityType.WeakPassword)
+            if i['type'] != DeviceType.Skip:
+                print('device', i['ip'], i['type'])
+                cur = self.check_for_device(i, usernames, passwords)
+                if cur:
+                    if i['mac'] in vulnerable_devices:
+                        vulnerable_devices[i['mac']].append(VulnerabilityType.WeakPassword)
+                    else:
+                        vulnerable_devices[i['mac']] = VulnerabilityType.WeakPassword
         return vulnerable_devices

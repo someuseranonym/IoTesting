@@ -27,7 +27,6 @@ def get_vendor(devices):
     return devices
 
 
-<<<<<<< HEAD
 def on_next_clicked(event):  # Receive the Treeview and data as parameters
     devices = interface.data
     print(interface.data)
@@ -38,7 +37,7 @@ def on_next_clicked(event):  # Receive the Treeview and data as parameters
             if device_str_name[j] == i['type']:
                 i['type'] = j
     print(devices)
-=======
+
 def recognize_types(event):
     print('start recognizing')
     '''devices = get_ip_mac_nework(f'{local_ip.split(".")[0]}.{local_ip.split(".")[1]}.{local_ip.split(".")[2]}.1/24')
@@ -69,7 +68,6 @@ def recognize_types(event):
 
 def on_next_clicked():  # Receive the Treeview and data as parameters
     print(123456, 'next clicked')
->>>>>>> parent of 5978755 (added vendor_type dict)
     interface.next_button1.pack_forget()
     interface.table_devices.pack_forget()
     vuln_checker = VulnerabilityChecker()
@@ -97,7 +95,7 @@ def on_next_clicked():  # Receive the Treeview and data as parameters
         messagebox.showinfo("Data Confirmation", "Data saved!  See the console output.")'''
 
 
-<<<<<<< HEAD
+
 def recognize_types(event):
     print('start recognizing')
     devices = get_ip_mac_nework(f'{local_ip.split(".")[0]}.{local_ip.split(".")[1]}.{local_ip.split(".")[2]}.1/24')
@@ -127,8 +125,7 @@ def recognize_types(event):
     interface.next_button1.pack(pady=20, side="bottom", anchor="center")
 
 
-=======
->>>>>>> parent of 5978755 (added vendor_type dict)
+
 interface.canvas.bind("<Button-1>", recognize_types)
 interface.canvas.pack(fill=BOTH, expand=True)  # Pack the canvas
 window.mainloop()
