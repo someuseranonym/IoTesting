@@ -1,3 +1,5 @@
+import socket
+
 from Vulnerabilities.Vulnerability import Vulnerability, VulnerabilityType
 from vendor_type import DeviceType
 
@@ -51,19 +53,78 @@ class SMTPUserEnumeration(Vulnerability):
 
 '''
 
-    def check_for_device(self, device):
-        pass
+
+    def check_for_device(self, device) -> bool:
+        """Проверка перечисления пользователей SMTP сервером"""
+        ip = device['ip']
+        print(f"Проверка SMTP сервера устройства {ip} на перечисление пользователей...")
+
+        # Получаем параметры SMTP сервера из конфигурации устройства
+        device_config = self.fake_devices.get(ip, {})
+        if not device_config.get("smtp_user_enum", False):
+            print(f"[+] SMTP сервер устройства {ip} не позволяет перечислять пользователей")
+            return False
+
+        smtp_host = device_config.get("smtp_host", "localhost")
+        smtp_port = device_config.get("smtp_port", 25)
+
+        try:
+            # Создаем соединение с SMTP сервером
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.settimeout(5)
+            sock.connect((smtp_host, smtp_port))
+            response = sock.recv(1024).decode().strip()
+
+            if not response.startswith("220"):
+                print(f"[+] SMTP сервер {ip} не отвечает должным образом")
+                return False
+
+            # Тестируем команду VRFY
+            sock.send(b"VRFY root\r\n")
+            response = sock.recv(1024).decode().strip()
+            if response.startswith("250"):
+                print(f"[!] Уязвимость: SMTP сервер {ip} позволяет перечислять пользователей через VRFY")
+                return True
+
+            # Тестируем команду EXPN
+            sock.send(b"EXPN test\r\n")
+            response = sock.recv(1024).decode().strip()
+            if response.startswith("250"):
+                print(f"[!] Уязвимость: SMTP сервер {ip} позволяет перечислять пользователей через EXPN")
+                return True
+
+            # Тестируем команду RCPT (нужно начать с MAIL FROM)
+            sock.send(b"MAIL FROM: <test@example.com>\r\n")
+            sock.recv(1024)  # Пропускаем ответ
+
+            sock.send(b"RCPT TO: <root>\r\n")
+            response = sock.recv(1024).decode().strip()
+            if response.startswith("250"):
+                print(f"[!] Уязвимость: SMTP сервер {ip} позволяет перечислять пользователей через RCPT TO")
+                return True
+
+            print(f"[+] SMTP сервер устройства {ip} не позволяет перечислять пользователей")
+            return False
+
+        except Exception as e:
+            print(f"[!] Ошибка при проверке SMTP сервера: {str(e)}")
+            return False
+        finally:
+            try:
+                sock.close()
+            except:
+                pass
 
     def check(self, devices):
         vulnerable_devices = {}
         print(devices)
         for i in devices:
-            if i['type'] != DeviceType.Skip:
+            if i['type'] in [DeviceType.Camera, DeviceType.Printer]:
                 print('device', i['ip'], i['type'])
                 cur = self.check_for_device(i)
                 if cur:
                     if i['mac'] in vulnerable_devices:
-                        vulnerable_devices[i['mac']].append(VulnerabilityType.MQTTPubSub)
+                        vulnerable_devices[i['mac']].append(VulnerabilityType.SMTPUserEnumration)
                     else:
-                        vulnerable_devices[i['mac']] = VulnerabilityType.MQTTPubSub
+                        vulnerable_devices[i['mac']] = VulnerabilityType.SMTPUserEnumration
         return vulnerable_devices

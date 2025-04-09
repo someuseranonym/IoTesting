@@ -1,8 +1,11 @@
+import time
+from killerbee.killerbee import KillerBee
 from Vulnerabilities.Vulnerability import Vulnerability, VulnerabilityType
+from killerbee.killerbee import KillerBee
 from vendor_type import DeviceType
 
 
-class SMTPUserEnumeration(Vulnerability):
+class PANConflict(Vulnerability):
     def __init__(self):
         """
         Инициализация объекта.
@@ -43,35 +46,36 @@ class SMTPUserEnumeration(Vulnerability):
 
 '''
 
-    def check_zigbee_pan_conflict(pcap_file):
-        """
-        Проверяет, есть ли конфликт PAN ID в сети ZigBee.
-        :param pcap_file: Путь к файлу с захваченным трафиком ZigBee
-        :return: True, если обнаружен конфликт, иначе False
-        """
-        kb = KillerBee()
-        kb.load_file(pcap_file)  # Загрузка файла с трафиком
+    def check_for_device(self, device, packets=None):
         pan_ids = set()
-        for packet in kb.packets:
-            if packet.is_beacon():  # Проверка на beacon-фреймы
-                pan_id = packet.pan_id
-                if pan_id in pan_ids:
-                    return True  # Обнаружен конфликт PAN ID
-                pan_ids.add(pan_id)
-        return False
-    def check_for_device(self, device):
-        pass
+        conflicts = set()
 
-    def check(self, devices):
+        for packet in packets:
+            if packet['type'] == 'ZIGBEE':
+                pan_id = packet['pan_id']
+                source_mac = packet['src_mac']
+
+                # Проверяем, соответствует ли MAC или IP устройству
+                if (device['mac'] and source_mac.lower() == device['mac'].lower()) or \
+                   (device['ip'] and packet['src_ip'] == device['ip']):
+                    if pan_id in pan_ids:
+                        conflicts.add(pan_id)
+                    else:
+                        pan_ids.add(pan_id)
+
+        return conflicts
+
+    def check(self, devices, packets):
         vulnerable_devices = {}
+        kb = KillerBee()
         print(devices)
         for i in devices:
-            if i['type'] != DeviceType.Skip:
+            if i['type'] in [DeviceType.Lamp, DeviceType.Socket, DeviceType.Thermostat, DeviceType.Lock]:
                 print('device', i['ip'], i['type'])
-                cur = self.check_for_device(i)
+                cur = self.check_for_device(i, kb)
                 if cur:
                     if i['mac'] in vulnerable_devices:
-                        vulnerable_devices[i['mac']].append(VulnerabilityType.MQTTPubSub)
+                        vulnerable_devices[i['mac']].append(VulnerabilityType.PANConflict)
                     else:
-                        vulnerable_devices[i['mac']] = VulnerabilityType.MQTTPubSub
+                        vulnerable_devices[i['mac']] = VulnerabilityType.PANConflict
         return vulnerable_devices

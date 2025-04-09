@@ -1,8 +1,9 @@
 from Vulnerabilities.Vulnerability import Vulnerability, VulnerabilityType
+from killerbee.killerbee import KillerBee
 from vendor_type import DeviceType
 
 
-class SMTPUserEnumeration(Vulnerability):
+class OpenKeyTransfer(Vulnerability):
     def __init__(self):
         """
         Инициализация объекта.
@@ -31,32 +32,30 @@ class SMTPUserEnumeration(Vulnerability):
 
 '''
 
-    def check_zigbee_insecure_keys(pcap_file):
-        """
-        Проверяет, передаются ли ключи ZigBee в незашифрованном виде.
-        :param pcap_file: Путь к файлу с захваченным трафиком ZigBee
-        :return: True, если ключи передаются в открытом виде, иначе False
-        """
-        kb = KillerBee()
-        kb.load_file(pcap_file)  # Загрузка файла с трафиком
-        for packet in kb.packets:
-            if packet.is_aps() and packet.aps_command == 0x05:  # Проверка APS-команды Transport Key
-                if packet.payload and b'\x00' in packet.payload:  # Проверка на открытый ключ
+    def check_for_device(self, device, packets):
+        for packet in packets:
+            if packet['type'] == 'ZIGBEE' and 'key' in packet:  # Предполагаем, что ключ передается в поле 'key'
+                source_mac = packet['src_mac']
+                # Проверяем, соответствует ли MAC или IP устройству
+                if (device['mac'] and source_mac.lower() == device['mac'].lower()) or \
+                   (device['ip'] and packet['src_ip'] == device['ip']):
+                    key_value = packet['key']
+                    print(f"Открытая передача ключа обнаружена от устройства {source_mac}: {key_value}")
                     return True
+
+        print("Открытая передача ключей не обнаружена.")
         return False
-    def check_for_device(self, device):
-        pass
 
     def check(self, devices):
         vulnerable_devices = {}
         print(devices)
         for i in devices:
-            if i['type'] != DeviceType.Skip:
+            if i['type'] in [DeviceType.Lamp, DeviceType.Socket, DeviceType.Thermostat, DeviceType.Lock]:
                 print('device', i['ip'], i['type'])
                 cur = self.check_for_device(i)
                 if cur:
                     if i['mac'] in vulnerable_devices:
-                        vulnerable_devices[i['mac']].append(VulnerabilityType.MQTTPubSub)
+                        vulnerable_devices[i['mac']].append(VulnerabilityType.OpenKeyTransfer)
                     else:
-                        vulnerable_devices[i['mac']] = VulnerabilityType.MQTTPubSub
+                        vulnerable_devices[i['mac']] = VulnerabilityType.OpenKeyTransfer
         return vulnerable_devices

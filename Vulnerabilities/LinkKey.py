@@ -1,8 +1,9 @@
 from Vulnerabilities.Vulnerability import Vulnerability, VulnerabilityType
+from killerbee.killerbee import KillerBee
 from vendor_type import DeviceType
+LINK_KEY = bytes.fromhex("5A 69 67 42 65 65 41 6C 6C 69 61 6E 63 65 30 39")
 
-
-class SMTPUserEnumeration(Vulnerability):
+class LinkKey(Vulnerability):
     def __init__(self):
         """
         Инициализация объекта.
@@ -41,31 +42,33 @@ class SMTPUserEnumeration(Vulnerability):
 
 '''
 
-    def check_zigbee_default_link_key(pcap_file):
-        """
-        Проверяет, используется ли ключ ZigBee по умолчанию.
-        :param pcap_file: Путь к файлу с захваченным трафиком ZigBee
-        :return: True, если используется ключ по умолчанию, иначе False
-        """
-        kb = KillerBee()
-        kb.load_file(pcap_file)  # Загрузка файла с трафиком
-        for packet in kb.packets:
-            if packet.is_aps() and b'\x5A\x69\x67\x42\x65\x65\x41\x6C\x6C\x69\x61\x6E\x63\x65\x30\x39' in packet.payload:
-                return True
-        return False
-    def check_for_device(self, device):
-        pass
 
-    def check(self, devices):
+    def check_for_device(self, device, packets):
+        for packet in packets:
+            if packet['type'] == 'ZIGBEE_APS':
+                source_mac = packet['src_mac']
+
+                # Проверяем, соответствует ли MAC или IP устройству
+                if (device['mac'] and source_mac.lower() == device['mac'].lower()) or \
+                   (device['ip'] and packet['src_ip'] == device['ip']):
+                    aps_payload = packet['payload']
+                    if LINK_KEY in aps_payload:
+                        print(f"Link Key найден в пакете APS от устройства {source_mac}.")
+                        return True
+
+        print("Link Key не найден.")
+        return False
+
+    def check(self, devices, packets):
         vulnerable_devices = {}
         print(devices)
         for i in devices:
-            if i['type'] != DeviceType.Skip:
+            if i['type'] in [DeviceType.Lamp, DeviceType.Socket, DeviceType.Thermostat, DeviceType.Lock]:
                 print('device', i['ip'], i['type'])
                 cur = self.check_for_device(i)
                 if cur:
                     if i['mac'] in vulnerable_devices:
-                        vulnerable_devices[i['mac']].append(VulnerabilityType.MQTTPubSub)
+                        vulnerable_devices[i['mac']].append(VulnerabilityType.LinkKey)
                     else:
-                        vulnerable_devices[i['mac']] = VulnerabilityType.MQTTPubSub
+                        vulnerable_devices[i['mac']] = VulnerabilityType.LinkKey
         return vulnerable_devices

@@ -7,11 +7,11 @@ import subprocess
 import logging
 import time
 from Vulnerabilities.Vulnerability import Vulnerability, VulnerabilityType
-from Vulnerabilities.test import check_ftp_anonymous
+
 from vendor_type import DeviceType
 
 
-class SMTPUserEnumeration(Vulnerability):
+class NoPass(Vulnerability):
     def __init__(self):
         """
         Инициализация объекта.
@@ -25,14 +25,14 @@ class SMTPUserEnumeration(Vulnerability):
 
      Читать, изменять или удалять файлы (в случае FTP).
 
-    📌Перехватывать данные (особенно в Telnet, где трафик не шифруется).
+    Перехватывать данные (особенно в Telnet, где трафик не шифруется).
 
      Использовать сервер для атак (например, рассылки спама или DDoS).''')
         self.methods = '''    Всегда меняйте пароль по умолчанию (если устройство новый, сразу зайдите в настройки).
 
     Отключите ненужные сервисы (особенно Telnet — он небезопасен в принципе).
 
-🔧 Конкретные действия:
+Конкретные действия:
 
 MQTT:
 
@@ -62,24 +62,14 @@ Telnet:
 
 '''
 
-    def check_mqtt_anonymous(ip):
-        """
-        Проверяет, разрешено ли подключение к MQTT-брокеру без пароля.
-        :param ip: IP-адрес устройства
-        :return: True, если подключение без пароля разрешено, иначе False
-        """
+    def check_mqtt_anonymous(self, ip):
         client = mqtt.Client()
         try:
             client.connect(ip, 1883, 60)  # Подключение к MQTT-брокеру
             return client.is_connected()
         finally:
             client.disconnect()
-    def check_ftp_anonymous(ip):
-        """
-        Проверяет, разрешено ли анонимное подключение к FTP-серверу.
-        :param ip: IP-адрес устройства
-        :return: True, если анонимное подключение разрешено, иначе False
-        """
+    def check_ftp_anonymous(self, ip):
         try:
             with ftplib.FTP(ip) as ftp:  # Используем контекстный менеджер для автоматического закрытия соединения
                 ftp.login()  # Попытка анонимного входа
@@ -87,12 +77,7 @@ Telnet:
         except ftplib.error_perm:
             return False
 
-    def check_telnet_anonymous(ip):
-        """
-        Проверяет, разрешено ли анонимное подключение к Telnet-серверу.
-        :param ip: IP-адрес устройства
-        :return: True, если анонимное подключение разрешено, иначе False
-        """
+    def check_telnet_anonymous(self, ip):
         try:
             with telnetlib.Telnet(
                     ip) as telnet:  # Используем контекстный менеджер для автоматического закрытия соединения
@@ -103,7 +88,7 @@ Telnet:
             logging.error(f"Ошибка при проверке Telnet на анонимное подключение: {e}")
             return False
     def check_for_device(self, device):
-        check_ftp_anonymous(device['ip'])
+        pass
 
 
 
@@ -111,12 +96,31 @@ Telnet:
         vulnerable_devices = {}
         print(devices)
         for i in devices:
-            if i['type'] != DeviceType.Skip:
+            if i['type'] in [DeviceType.Sensor, DeviceType.Counter, DeviceType.Socket, DeviceType.light_switch]:
                 print('device', i['ip'], i['type'])
-                cur = self.check_for_device(i)
+                cur = self.check_mqtt_anonymous(i['ip'])
                 if cur:
                     if i['mac'] in vulnerable_devices:
-                        vulnerable_devices[i['mac']].append(VulnerabilityType.MQTTPubSub)
+                        vulnerable_devices[i['mac']].append(VulnerabilityType.NoPass)
                     else:
-                        vulnerable_devices[i['mac']] = VulnerabilityType.MQTTPubSub
+                        vulnerable_devices[i['mac']] = VulnerabilityType.NoPass
+                    vulnerable_devices[i['mac']][-1].name += ' по протоколу MQTT'
+            if i['type'] in [DeviceType.Camera, DeviceType.Printer]:
+                print('device', i['ip'], i['type'])
+                cur = self.check_ftp_anonymous(i['ip'])
+                if cur:
+                    if i['mac'] in vulnerable_devices:
+                        vulnerable_devices[i['mac']].append(VulnerabilityType.NoPass)
+                    else:
+                        vulnerable_devices[i['mac']] = VulnerabilityType.NoPass
+                    vulnerable_devices[i['mac']][-1].name += ' по протоколу FTP'
+            if i['type'] in [DeviceType.Camera, DeviceType.Printer]:
+                print('device', i['ip'], i['type'])
+                cur = self.check_telnet_anonymous(i['ip'])
+                if cur:
+                    if i['mac'] in vulnerable_devices:
+                        vulnerable_devices[i['mac']].append(VulnerabilityType.NoPass)
+                    else:
+                        vulnerable_devices[i['mac']] = VulnerabilityType.NoPass
+                    vulnerable_devices[i['mac']][-1].name += ' по протоколу Telnet'
         return vulnerable_devices

@@ -95,7 +95,7 @@ class PortScanner(Vulnerability):
 
     def check(self, devices):
         open_ports = {}
-
+        vulns = {}
         for device in devices:
             if device['type'] != DeviceType.Skip:
                 target_ip = device['ip']
@@ -117,9 +117,12 @@ class PortScanner(Vulnerability):
                             if self.masscan[target_ip][proto][port]['state'] == 'open':
                                 cur.append(str(port))
                                 print(f"⚡ Обнаружен открытый порт: {port}/{proto} на {target_ip}")
+                                if device['mac'] in vulns:
+                                    vulns[device['mac']].append(VulnerabilityType.OpenPort)
+                                else:
+                                    vulns[device['mac']] = VulnerabilityType.OpenPort
                 else:
                     print(f"No open ports found on {target_ip}")
 
                 open_ports[target_ip] = cur
-
-        return open_ports
+        return vulns

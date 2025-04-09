@@ -1,3 +1,7 @@
+import time
+
+from paho import mqtt
+
 from Vulnerabilities.Vulnerability import Vulnerability, VulnerabilityType
 from vendor_type import DeviceType
 
@@ -87,12 +91,9 @@ bash
 Если все настроено правильно, вы увидите сообщение "Hello World".
 '''
 
-    def check_mqtt_publish_subscribe(ip):
-        """
-        Проверяет, возможно ли публиковать сообщения и подписываться на топики в MQTT.
-        :param ip: IP-адрес устройства
-        :return: True, если публикация и подписка возможны, иначе False
-        """
+
+    def check_for_device(self, device):
+        ip = device['ip']
         received_message = False
 
         def on_message(client, userdata, message):
@@ -113,14 +114,11 @@ bash
             return received_message
         finally:
             client.disconnect()
-    def check_for_device(self, device):
-        pass
-
     def check(self, devices):
         vulnerable_devices = {}
         print(devices)
         for i in devices:
-            if i['type'] != DeviceType.Skip:
+            if i['type'] in [DeviceType.Sensor, DeviceType.Counter, DeviceType.Socket, DeviceType.light_switch]:
                 print('device', i['ip'], i['type'])
                 cur = self.check_for_device(i)
                 if cur:
