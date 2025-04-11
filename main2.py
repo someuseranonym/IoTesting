@@ -5,8 +5,10 @@ from tkinter import *
 from Vulnerabilities.VulnerabilityChecker import *
 from subprocess import check_output  # Добавлен импорт
 
-# Константы (должны быть определены где-то в вашем коде)
-device_str_name = {}  # Замените на реальный словарь соответствий типов устройств
+device_str_name = {DeviceType.Lamp: 'Лампа', DeviceType.Socket: 'Розетка', DeviceType.Thermostat: 'Термостат',
+                   DeviceType.Printer: 'Принтер', DeviceType.Sensor: 'Датчик', DeviceType.light_switch: 'Выключатель',
+                   DeviceType.Counter: 'Счётчик', DeviceType.Lock: 'Замок', DeviceType.Camera: 'Камера',
+                   DeviceType.Skip: 'Пропустить устройство'}
 
 def get_gateway():
     try:
@@ -33,20 +35,15 @@ def get_vendor(devices):
     return devices
 
 def on_next_clicked(event=None):  # Добавлен параметр по умолчанию для совместимости
-    print('Next clicked')
     devices = interface.data
-    print("Current devices data:", devices)
-    
-    # Преобразование типов устройств
-    for device in devices:
-        device_type = device.get('тип') or device.get('type')
-        if device_type:
-            for key, value in device_str_name.items():
-                if value == device_type:
-                    device['type'] = key
-                    break
-    
-    print("Processed devices:", devices)
+    print(interface.data)
+    print(devices)
+    for i in devices:
+        i['type'] = i['тип']
+        for j in device_str_name:
+            if device_str_name[j] == i['type']:
+                i['type'] = j
+    print(devices)
     
     # Проверка уязвимостей
     vuln_checker = VulnerabilityChecker()
@@ -57,18 +54,8 @@ def on_next_clicked(event=None):  # Добавлен параметр по ум�
     interface.table_devices.pack_forget()
     
     # Формирование тестовых данных (замените на реальные результаты)
-    data2 = [{
-        "№": 1, 
-        "ip": '127.0.0.1', 
-        "mac": 'adads788', 
-        "type": 'switch', 
-        "vuln": 'Пример уязвимости',
-        "desc": 'Описание уязвимости',
-        "threats": 'Потенциальные угрозы',
-        'methods': 'Методы защиты'
-    }]
-    
-    interface.show_vulns_table(data2)
+    print(vulnerabilities)
+    interface.show_vulns_table(vulnerabilities)
 
 def recognize_types(event):
     print('Starting device recognition')

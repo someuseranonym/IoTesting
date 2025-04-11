@@ -1,5 +1,5 @@
 from Vulnerabilities.Vulnerability import Vulnerability, VulnerabilityType
-from killerbee.killerbee import KillerBee
+from killerbee import KillerBee
 from vendor_type import DeviceType
 
 
@@ -9,6 +9,9 @@ class OpenKeyTransfer(Vulnerability):
         Инициализация объекта.
         """
         super().__init__()  # Вызов конструктора базового класса
+        self.ip = ''
+        self.type = ''
+        self.vulns={}
         self.name = "Небезопасная передача ключа Zigbee"
         self.desc = ("При подключении Zigbee-устройств (лампы, датчики) ключ шифрования иногда передаётся в открытом виде")
         self.threats = ('''Злоумышленник может перехватить ключ и подключиться к вашей сети.
@@ -31,7 +34,14 @@ class OpenKeyTransfer(Vulnerability):
         Ограничьте доступ к порту Zigbee (обычно 8080 для Zigbee2MQTT)
 
 '''
-
+    def append(self, device):
+        if device['mac'] in self.vulns:
+            self.vulns[device['mac']].append(OpenKeyTransfer())
+        else:
+            self.vulns[device['mac']] = [OpenKeyTransfer()]
+        print(self.vulns)
+        self.vulns[device['mac']][-1].ip=device['ip']
+        self.vulns[device['mac']][-1].type = device['тип']
     def check_for_device(self, device, packets):
         for packet in packets:
             if packet['type'] == 'ZIGBEE' and 'key' in packet:  # Предполагаем, что ключ передается в поле 'key'
@@ -54,8 +64,5 @@ class OpenKeyTransfer(Vulnerability):
                 print('device', i['ip'], i['type'])
                 cur = self.check_for_device(i)
                 if cur:
-                    if i['mac'] in vulnerable_devices:
-                        vulnerable_devices[i['mac']].append(VulnerabilityType.OpenKeyTransfer)
-                    else:
-                        vulnerable_devices[i['mac']] = VulnerabilityType.OpenKeyTransfer
-        return vulnerable_devices
+                    self.append(i)
+        return self.vulns

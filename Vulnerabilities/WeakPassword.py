@@ -4,7 +4,7 @@ import socket
 import telnetlib
 import time
 
-from pysnmp.hlapi import getCmd, SnmpEngine, CommunityData, UdpTransportTarget, ContextData, ObjectType, ObjectIdentity
+
 import requests
 from requests.auth import HTTPBasicAuth
 import socket
@@ -41,6 +41,8 @@ from functools import partial
 import tqdm.notebook as tq
 
 import socket
+
+from pysnmp.hlapi.v3arch.asyncio import get_cmd
 
 
 def check_port(ip_address, port):
@@ -81,8 +83,9 @@ def brute_force_ssh(device, usernames, passwords):
                 # print(f"[-] Неудачная попытка: Username: {username}, Пароль: {password}")
                 pass
             except Exception as e:
-                print(f"[!] Ошибка: {e}")
-                return
+                continue
+    return False
+
 
     print("[-] Учетные данные не найдены в заданных списках.")
 
@@ -102,8 +105,8 @@ def check_ssl(target_ip, port):
                     print(f" - Издатель: {dict(x[0] for x in cert['issuer'])}")
                     return True
         except Exception as e:
-            print(f"⚠️ Ошибка SSL на порту {port}: {str(e)}")
             return False
+        return False
 def check_https_vulnerabilities(target_ip, username, password):
         """Проверка уязвимостей HTTPS"""
         print(f"\n🔍 Проверка HTTPS на {target_ip}...")
@@ -121,7 +124,7 @@ def check_https_vulnerabilities(target_ip, username, password):
 
                 if response.status_code == 200:
                     print(f"⚠ HTTPS-интерфейс доступен на порту {port}")
-                    check_ssl(target_ip, port)
+                    return check_ssl(target_ip, port)
 
                     # Дополнительные проверки
                     tests = [
@@ -141,9 +144,10 @@ def check_https_vulnerabilities(target_ip, username, password):
             except Exception as e:
                 print(f"   {str(e)}")
                 continue
+        return False
 def check_default_credentials(ip, username, password):
     """Проверка стандартных учетных данных"""
-    print("\nПроверка стандартных паролей...")
+    #print("\nПроверка стандартных паролей...")
     urls_to_check = [
         f"http://{ip}/",
         f"http://{ip}/cgi-bin/userConfig.cgi",
@@ -161,8 +165,6 @@ def check_default_credentials(ip, username, password):
                 return True
         except:
             continue
-
-    print("✅ Стандартные пароли не работают (или веб-интерфейс недоступен)")
     return False
 
 def brute_force_http(device, usernames, passwords):
@@ -177,47 +179,52 @@ def brute_force_http(device, usernames, passwords):
             res = check_default_credentials(device['ip'], username, password)
             if res:
                 print('weak password', username, password, device['ip'])
+                return True
+    return False
 
-                return
 
-
-def brute_force_snmp(wordlist, snmp_version, ip, port, timeout=1):
+def brute_force_snmp(wordlist, snmp_version, ip, port, timeout=1.0):
     v_arg = 1 if snmp_version == '2c' else 0  # 1 for SNMPv2c, 0 for v1
-
     print(f'Starting SNMPv{snmp_version} bruteforce on {ip}:{port}')
 
     with open(wordlist, 'r') as in_file:
         communities = [line.strip() for line in in_file if line.strip()]
 
     for com in tqdm(communities, desc="Testing communities"):
-        time.sleep(0.2)  # Чтобы не перегружать устройство
+        time.sleep(0.2)  # Rate limiting
 
-        errorIndication, errorStatus, errorIndex, varBinds = next(
-            getCmd(
-                SnmpEngine(),
-                CommunityData(com, mpModel=v_arg),
-                UdpTransportTarget((ip, port), timeout=timeout, retries=1),
-                ContextData(),
-                ObjectType(ObjectIdentity('1.3.6.1.2.1.1.1.0'))  # sysDescr как OID
-            )
-        )
+        try:
+            errorIndication, errorStatus, errorIndex, varBinds = next(
+                getCmd(
+                    SnmpEngine(),
+                    CommunityData(com, mpModel=v_arg),
+                    UdpTransportTarget(
+                        transportAddr=(ip, port),
+                        timeout=timeout,
+                        retries=1
+                    ),
+                    ContextData(),
+                    ObjectType(ObjectIdentity('1.3.6.1.2.1.1.1.0'))
+                ))
 
-        # Обработка ответа
-        if errorIndication:
-            tqdm.write(f"'{com}': Error - {errorIndication}")
+            # Обработка ответа
+            if errorIndication:
+                tqdm.write(f"'{com}': Error - {errorIndication}")
+                continue
+            elif errorStatus:
+                tqdm.write(f"'{com}': Auth failed - {errorStatus.prettyPrint()}")
+                continue
+
+            # Успешный ответ
+            tqdm.write(f"\n[+] Found community: '{com}'")
+            for varBind in varBinds:
+                tqdm.write(f"Response: {' = '.join([x.prettyPrint() for x in varBind])}")
+            return True
+        except Exception as e:
             continue
-        elif errorStatus:
-            tqdm.write(f"'{com}': Auth failed - {errorStatus.prettyPrint()}")
-            continue
 
-        # Успешный ответ
-        tqdm.write(f"\n[+] Found community: '{com}'")
-        for varBind in varBinds:
-            tqdm.write(f"Response: {' = '.join([x.prettyPrint() for x in varBind])}")
-        return com  # Возвращаем найденное community
-
-    print("\n[!] No valid communities found")
-    return None
+        print("\n[!] No valid communities found")
+    return False
 
 
 def on_connect(client, userdata, flags, rc):
@@ -243,10 +250,11 @@ def brute_force_mqtt(device, port, usernames, passwords):
                 rc = client.username_pw_set(username, password)
                 if rc == mqtt.MQTT_ERR_SUCCESS:
                     print("Login succeeded with username, password: ", username, password)
-                    break
+                    return True
         print('no passwords')
     except Exception as e:
-        print('mqtt', e)
+        pass
+    return False
 
 
 def tcp_syn_scan(ip, port, timeout=5):
@@ -263,6 +271,7 @@ def tcp_syn_scan(ip, port, timeout=5):
     except Exception as e:
         # print(f"TCP SYN Scan Error for {ip}:{port} - {e}") #Suppress noise
         return False
+    return False
 
 
 def check_telnet_credentials(ip, port, usernames, passwords, timeout=5):
@@ -273,7 +282,7 @@ def check_telnet_credentials(ip, port, usernames, passwords, timeout=5):
     print('telnet testing ')
     if not tcp_syn_scan(ip, port, timeout):
         print('telnet port is closed')
-        return " telnet Port is closed"
+        return False
 
     try:
         tn = telnetlib.Telnet(ip, port, timeout=timeout)
@@ -298,22 +307,21 @@ def check_telnet_credentials(ip, port, usernames, passwords, timeout=5):
                     if "Login incorrect" not in response and "Invalid password" not in response and "Incorrect" not in response and "denied" not in response:
                         print(f"  Telnet: Login successful with {username}:{password}")
                         tn.close()
-                        return f"Vulnerable (Telnet, {username}:{password})"
+                        return True
                     i+=1
         except Exception as e:
-            print(f"Telnet Login Exception: {e}")
             tn.close()
-            return "Login Failure"
+            return False
         tn.close()  # Clean up the connection
-        return "Likely not vulnerable (Telnet, default credentials)"
+        return False
 
 
     except socket.timeout:
-        return "Timeout during Telnet check"
+        return False
     except ConnectionRefusedError:
-        return "Connection refused during Telnet check"
+        return False
     except Exception as e:
-        return f"Telnet check error: {e}"
+        return False
 
 
 def check_ftp_credentials(ip, port, usernames, passwords, timeout=5):
@@ -322,7 +330,6 @@ def check_ftp_credentials(ip, port, usernames, passwords, timeout=5):
     default_logins - список кортежей (username, password) для тестирования.
     """
     if not tcp_syn_scan(ip, port, timeout):
-        print("Port is closed")
         return False
 
     try:
@@ -334,7 +341,7 @@ def check_ftp_credentials(ip, port, usernames, passwords, timeout=5):
             ftp.login()
             print("  FTP: Anonymous login successful.")
             ftp.quit()
-            return "Vulnerable (FTP, anonymous login)"
+            return True
         except ftplib.error_perm as e:  # Check for non-230 errors (e.g. 530)
             if "530" in str(e):
                 print("  FTP: Anonymous login refused")
@@ -350,25 +357,25 @@ def check_ftp_credentials(ip, port, usernames, passwords, timeout=5):
                     ftp.login(username, password)
                     print(f"  FTP: Login successful with: {username}:{password}")
                     ftp.quit()
-                    return f"Vulnerable (FTP, {username}:{password})"
+                    return True
                 except ftplib.error_perm as e:  # Check for non-230 errors (e.g. 530)
                     pass
                 except Exception as e:
                     print(f"FTP login error: {e}")
 
         ftp.quit()  # Clean up
-        return "Likely not vulnerable (FTP, default credentials)"
+        return False
 
 
     except socket.timeout:
-        return "Timeout during FTP check"
+        return False
     except ConnectionRefusedError:
-        return "Connection refused during FTP check"
+        return False
     except ftplib.all_errors as e:  # Catch all ftplib errors for the initial connect
-        return f"FTP connection error: {e}"  # Return error if it can't connect to FTP Server
+        return False
 
     except Exception as e:
-        return f"FTP check error: {e}"
+        return False
 
 
 def check_default_credentials2(ip, username, password):
@@ -449,6 +456,9 @@ class WeakPassword(Vulnerability):
         Инициализация объекта.
         """
         super().__init__()  # Вызов конструктора базового класса
+        self.vulns = {}
+        self.ip = ''
+        self.type = ''
         self.name = "Слабый пароль"
         self.desc = "Обнаружен слабый пароль, который легко подобрать."
         self.threats = ("Злоумышленник получит полный контроль над устройством. "
@@ -458,115 +468,59 @@ class WeakPassword(Vulnerability):
                         "Использовать устройство для распространения вредоносного ПО на другие устройства в локальной сети.")
         self.methods = ('''
 
-    Замените пароль на сложный:
+    - Откройте веб-интерфейс камеры (обычно через IP-адрес в браузере).  
+- Перейдите в раздел *Настройки → Безопасность → Пароль* (или аналогичный).  
+- Установите *сложный пароль* (минимум 12 символов, буквы верхнего/нижнего регистра, цифры, спецсимволы).  
+- Если есть несколько пользователей, измените пароли для всех учетных записей.  
+- В настройках камеры найдите раздел *Сеть → Безопасность → HTTPS/SSL*.  
+- Включите *HTTPS* (если камера его поддерживает).  
+- Если есть возможность, загрузите *свой SSL-сертификат* (например, из Let's Encrypt).  
+- Если HTTPS нет, *ограничьте доступ к камере
+- Зайдите на сайт производителя и найдите последнюю *прошивку* для вашей модели.  
+- В веб-интерфейсе камеры перейдите в *Настройки → Обновление ПО*.  
+- Загрузите и установите новую версию.  
+- *Закройте доступ из интернета*, если он не нужен (через роутер).  
+- Если доступ нужен, используйте *VPN* вместо проброса портов.  
+- Включите *брандмауэр* и разрешите доступ только с доверенных IP-адресов.  
+- Отключите *UPnP* в камере и роутере (чтобы порты не открывались автоматически).  
+- Включите *двухфакторную аутентификацию (2FA)*, если камера поддерживает.  
+- Регулярно *проверяйте логи* на предмет подозрительных подключений.  
+- Если камера устарела и не получает обновлений — *замените ее* на более безопасную модель.  ''')
 
-        Длина: от 12 символов.
-
-        Состав: буквы (A-Z, a-z), цифры (0-9), спецсимволы (!@#$%^&*).
-
-        Пример: МойДом#2024! (легко запомнить, но сложно взломать).
-
-    Отключите ненужные сервисы (если не используете FTP, Telnet, SNMP — выключите их).
-
-    Обновите прошивку/ПО — в новых версиях часто закрывают уязвимости.
-
- Для компьютеров и серверов (Windows/macOS/Linux)
-SSH (если используете):
-
-    Смените пароль:
-    bash
-    Copy
-
-    passwd
-
-    Отключите вход по паролю (только по ключу):
-
-        Создайте SSH-ключ:
-        bash
-        Copy
-
-        ssh-keygen -t ed25519
-
-        Скопируйте его на сервер:
-        bash
-        Copy
-
-        ssh-copy-id user@ваш_IP
-
-        Отключите парольную аутентификацию в /etc/ssh/sshd_config:
-        ini
-        Copy
-
-        PasswordAuthentication no
-
-FTP (если используете):
-
-    Отключите анонимный доступ (в настройках FTP-сервера).
-
-    Измените пароль пользователя:
-    bash
-    Copy
-
-    sudo passwd ftp_user
-
- Для роутеров, камер и IoT-устройств
-
-    Зайдите в веб-интерфейс (обычно через http://192.168.1.1).
-
-    Найдите раздел "Пароль" или "Безопасность".
-
-    Замените пароль администратора.
-
-    Отключите:
-
-        Telnet (если есть)
-
-        SNMP (если не используете)
-
-        Гостевой доступ (если не нужен)
-
- Для MQTT (умные дома, датчики)
-
-    Включите пароль в настройках брокера (например, Mosquitto).
-
-    Запретите анонимный доступ:
-    ini
-    Copy
-
-    allow_anonymous false
-    password_file /etc/mosquitto/passwd
-
- 3. Дополнительная защита
-
-    Используйте менеджер паролей (KeePass, Bitwarden) для хранения сложных паролей.
-
-    Включите двухфакторную аутентификацию (2FA), если устройство поддерживает.
-
-    Регулярно проверяйте обновления для устройств.
-
- Что делать, если устройство уже взломано?
-
-    Отключите его от интернета.
-
-    Сбросьте настройки до заводских (кнопка Reset на роутерах/камерах).
-
-    Установите новый пароль перед повторным подключением.''')
+    def append(self, device, text):
+        if device['mac'] in self.vulns:
+            self.vulns[device['mac']].append(WeakPassword())
+        else:
+            self.vulns[device['mac']] = [WeakPassword()]
+        print(self.vulns)
+        self.vulns[device['mac']][-1].name += ' '+text
+        self.vulns[device['mac']][-1].ip=device['ip']
+        self.vulns[device['mac']][-1].type = device['тип']
 
     def check_for_device(self, device, usernames, passwords):
         print('check', device['mac'], device['type'])
-        snmp_path = 'Vulnerabilities/WordLists/snmp_comms.txt'
+        snmp_path = '/home/mint/PycharmProjects/IoTesting/Vulnerabilities/WordLists/snmp_comms.txt'
         if device['type'] in [DeviceType.light_switch, DeviceType.Lamp, DeviceType.Counter, DeviceType.Socket]:
-            brute_force_http(device, usernames, passwords)
-            brute_force_mqtt(device, 1883, usernames, passwords)
-            check_ftp_credentials(device['ip'], 21, usernames, passwords)
-            check_telnet_credentials(device['ip'], 23, usernames, passwords)
+            #if (brute_force_http(device, usernames, passwords)):
+            #   self.append(device, 'по протоколу HTTP')
+            if(brute_force_mqtt(device, 1883, usernames, passwords)):
+                self.append(device, 'по протоколу MQTT')
+            if(check_ftp_credentials(device['ip'], 21, usernames, passwords)):
+                self.append(device, 'по протоколу FTP')
+            if(check_telnet_credentials(device['ip'], 23, usernames, passwords)):
+                self.append(device, 'по протоколу Telnet')
         match device['type']:
             case DeviceType.Camera:
-                brute_force_ssh(device, usernames, passwords)
-                check_default_credentials2(device['ip'], 'admin', 'admin')
-                check_default_credentials2(device['ip'], 'user', '1')
-                brute_force_snmp(snmp_path, '1', device['ip'], 22, 2)
-                brute_force_snmp(snmp_path, '2c', device['ip'], 22, 2)
+                if(brute_force_ssh(device, usernames, passwords)):
+                    self.append(device, 'по протоколу SSH')
+                if(check_default_credentials2(device['ip'], 'admin', 'admin')):
+                    self.append(device, 'по протоколу HTTP')
+                if(check_default_credentials2(device['ip'], 'user', '1')):
+                    self.append(device, 'по протоколу HTTP')
+                if(brute_force_snmp(snmp_path, '1', device['ip'], 22, 2)):
+                    self.append(device, 'по протоколу SNMP')
+                if(brute_force_snmp(snmp_path, '2c', device['ip'], 22, 2)):
+                    self.append(device, 'по протоколу SNMP')
             case DeviceType.Printer:
                 brute_force_http(device, usernames, passwords)
                 brute_force_snmp(snmp_path, '1', device['ip'], 22, 2)
@@ -611,4 +565,4 @@ FTP (если используете):
                         vulnerable_devices[i['mac']].append(VulnerabilityType.WeakPassword)
                     else:
                         vulnerable_devices[i['mac']] = VulnerabilityType.WeakPassword
-        return vulnerable_devices
+        return self.vulns

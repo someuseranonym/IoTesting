@@ -10,6 +10,9 @@ class PortScanner(Vulnerability):
         """
         super().__init__()  # Вызов конструктора базового класса
         self.name = "Открытые порты"
+        self.ip = ''
+        self.type = ''
+        self.vulns={}
         self.port_problems = {
             "554": {
                 "name": "RTSP Unauthorized Access",
@@ -92,10 +95,18 @@ class PortScanner(Vulnerability):
 
         Например, для SSH (порт 22) отредактируйте /etc/ssh/sshd_config (Linux) или настройки OpenSSH (Windows).'''
         self.masscan = masscan.PortScanner()
-
+    def append(self, device):
+        if device['mac'] in self.vulns:
+            self.vulns[device['mac']].append(PortScanner())
+        else:
+            self.vulns[device['mac']] = [PortScanner()]
+        print(self.vulns)
+        self.vulns[device['mac']][-1].ip=device['ip']
+        self.vulns[device['mac']][-1].type = device['тип']
     def check(self, devices):
         open_ports = {}
         vulns = {}
+        print(devices)
         for device in devices:
             if device['type'] != DeviceType.Skip:
                 target_ip = device['ip']
@@ -117,12 +128,9 @@ class PortScanner(Vulnerability):
                             if self.masscan[target_ip][proto][port]['state'] == 'open':
                                 cur.append(str(port))
                                 print(f"⚡ Обнаружен открытый порт: {port}/{proto} на {target_ip}")
-                                if device['mac'] in vulns:
-                                    vulns[device['mac']].append(VulnerabilityType.OpenPort)
-                                else:
-                                    vulns[device['mac']] = VulnerabilityType.OpenPort
+                                self.append(device)
                 else:
                     print(f"No open ports found on {target_ip}")
 
                 open_ports[target_ip] = cur
-        return vulns
+        return self.vulns

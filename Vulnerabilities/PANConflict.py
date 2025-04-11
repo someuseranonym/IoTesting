@@ -1,7 +1,6 @@
 import time
-from killerbee.killerbee import KillerBee
 from Vulnerabilities.Vulnerability import Vulnerability, VulnerabilityType
-from killerbee.killerbee import KillerBee
+from killerbee import KillerBee
 from vendor_type import DeviceType
 
 
@@ -11,6 +10,9 @@ class PANConflict(Vulnerability):
         Инициализация объекта.
         """
         super().__init__()  # Вызов конструктора базового класса
+        self.ip = ''
+        self.type = ''
+        self.vulns={}
         self.name = "Конфликт PAN-идентификаторов Zigbee"
         self.desc = '''PAN-ID (Personal Area Network Identifier) — это уникальный номер Zigbee-сети. Если рядом есть две сети с одинаковым PAN-ID, устройства могут:
 
@@ -64,7 +66,14 @@ class PANConflict(Vulnerability):
                         pan_ids.add(pan_id)
 
         return conflicts
-
+    def append(self, device):
+        if device['mac'] in self.vulns:
+            self.vulns[device['mac']].append(PANConflict())
+        else:
+            self.vulns[device['mac']] = [PANConflict()]
+        print(self.vulns)
+        self.vulns[device['mac']][-1].ip=device['ip']
+        self.vulns[device['mac']][-1].type = device['тип']
     def check(self, devices, packets):
         vulnerable_devices = {}
         kb = KillerBee()
@@ -74,8 +83,5 @@ class PANConflict(Vulnerability):
                 print('device', i['ip'], i['type'])
                 cur = self.check_for_device(i, kb)
                 if cur:
-                    if i['mac'] in vulnerable_devices:
-                        vulnerable_devices[i['mac']].append(VulnerabilityType.PANConflict)
-                    else:
-                        vulnerable_devices[i['mac']] = VulnerabilityType.PANConflict
-        return vulnerable_devices
+                    self.append(i)
+        return self.vulns

@@ -12,6 +12,9 @@ class MQTTPubSub(Vulnerability):
         Инициализация объекта.
         """
         super().__init__()  # Вызов конструктора базового класса
+        self.ip = ''
+        self.type = ''
+        self.vulns={}
         self.name = "Возможность публикации сообщения и подписки на топик по протоколу MQTT"
         self.desc = ("Злоумышленник может получить доступ к сообщениям, которые отправляются между устройствами, "
                      "или даже отправлять свои собственные сообщения.")
@@ -91,6 +94,14 @@ bash
 Если все настроено правильно, вы увидите сообщение "Hello World".
 '''
 
+    def append(self, device):
+        if device['mac'] in self.vulns:
+            self.vulns[device['mac']].append(MQTTPubSub())
+        else:
+            self.vulns[device['mac']] = [MQTTPubSub()]
+        print(self.vulns)
+        self.vulns[device['mac']][-1].ip=device['ip']
+        self.vulns[device['mac']][-1].type = device['тип']
 
     def check_for_device(self, device):
         ip = device['ip']
@@ -122,8 +133,5 @@ bash
                 print('device', i['ip'], i['type'])
                 cur = self.check_for_device(i)
                 if cur:
-                    if i['mac'] in vulnerable_devices:
-                        vulnerable_devices[i['mac']].append(VulnerabilityType.MQTTPubSub)
-                    else:
-                        vulnerable_devices[i['mac']] = VulnerabilityType.MQTTPubSub
-        return vulnerable_devices
+                    self.append(i)
+        return self.vulns

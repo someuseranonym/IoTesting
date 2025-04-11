@@ -1,5 +1,5 @@
 from Vulnerabilities.Vulnerability import Vulnerability, VulnerabilityType
-from killerbee.killerbee import KillerBee
+from killerbee import KillerBee
 from vendor_type import DeviceType
 LINK_KEY = bytes.fromhex("5A 69 67 42 65 65 41 6C 6C 69 61 6E 63 65 30 39")
 
@@ -9,6 +9,9 @@ class LinkKey(Vulnerability):
         Инициализация объекта.
         """
         super().__init__()  # Вызов конструктора базового класса
+        self.ip = ''
+        self.type = ''
+        self.vulns ={}
         self.name = "Использование link key Zigbee по умолчанию"
         self.desc = ("Link Key — это пароль для подключения устройств Zigbee (лампы, датчики, розетки)."
                      "Многие устройства используют один и тот же заводской пароль ")
@@ -42,6 +45,14 @@ class LinkKey(Vulnerability):
 
 '''
 
+    def append(self, device):
+        if device['mac'] in self.vulns:
+            self.vulns[device['mac']].append(LinkKey())
+        else:
+            self.vulns[device['mac']] = [LinkKey()]
+        print(self.vulns)
+        self.vulns[device['mac']][-1].ip=device['ip']
+        self.vulns[device['mac']][-1].type = device['тип']
 
     def check_for_device(self, device, packets):
         for packet in packets:
@@ -60,15 +71,11 @@ class LinkKey(Vulnerability):
         return False
 
     def check(self, devices, packets):
-        vulnerable_devices = {}
         print(devices)
         for i in devices:
             if i['type'] in [DeviceType.Lamp, DeviceType.Socket, DeviceType.Thermostat, DeviceType.Lock]:
                 print('device', i['ip'], i['type'])
                 cur = self.check_for_device(i)
                 if cur:
-                    if i['mac'] in vulnerable_devices:
-                        vulnerable_devices[i['mac']].append(VulnerabilityType.LinkKey)
-                    else:
-                        vulnerable_devices[i['mac']] = VulnerabilityType.LinkKey
-        return vulnerable_devices
+                    self.append(i)
+        return self.vulns

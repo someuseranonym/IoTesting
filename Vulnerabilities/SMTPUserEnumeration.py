@@ -5,11 +5,17 @@ from vendor_type import DeviceType
 
 
 class SMTPUserEnumeration(Vulnerability):
-    def __init__(self):
+    COMMON_SMTP_PORTS = [25, 465, 587]  # Стандартные порты SMTP
+    COMMON_USERS = ['root', 'admin', 'user', 'support']  # Часто используемые имена пользователей
+
+    def __init__(self, timeout: float = 5.0):
         """
         Инициализация объекта.
         """
         super().__init__()  # Вызов конструктора базового класса
+        self.ip = ''
+        self.type = ''
+        self.vulns = {}
         self.name = "Перечисление пользователей SMTP-сервером"
         self.desc = ("Злоумышленник может получить список всех пользователей, зарегистрированных на SMTP-сервере "
                      "(сервере, который отправляет и получает электронные письма).")
@@ -52,68 +58,104 @@ class SMTPUserEnumeration(Vulnerability):
         Проверьте историю входов в аккаунт (если такая функция доступна) на наличие незнакомых устройств или местоположений.
 
 '''
+        self.timeout = timeout
 
+    def check_for_device(self, ip: str, mac: str = None):
+        """
+        Проверяет устройство на уязвимости SMTP
+        :param ip: IP адрес устройства
+        :param mac: MAC адрес (опционально, для логирования)
+        :return: Словарь с результатами проверок
+        """
+        results = {
+            'smtp_detected': False,
+            'vrfy_vulnerable': False,
+            'expn_vulnerable': False,
+            'rcpt_vulnerable': False
+        }
 
-    def check_for_device(self, device) -> bool:
-        """Проверка перечисления пользователей SMTP сервером"""
-        ip = device['ip']
-        print(f"Проверка SMTP сервера устройства {ip} на перечисление пользователей...")
+        print(f"\n[🔍] Начинаем проверку SMTP для устройства {ip} ({mac or 'без MAC'})")
 
-        # Получаем параметры SMTP сервера из конфигурации устройства
-        device_config = self.fake_devices.get(ip, {})
-        if not device_config.get("smtp_user_enum", False):
-            print(f"[+] SMTP сервер устройства {ip} не позволяет перечислять пользователей")
-            return False
+        # Проверяем все возможные SMTP порты
+        for port in self.COMMON_SMTP_PORTS:
+            if self._check_smtp_service(ip, port):
+                results['smtp_detected'] = True
+                print(f"[ℹ️] Обнаружен SMTP сервер на {ip}:{port}")
 
-        smtp_host = device_config.get("smtp_host", "localhost")
-        smtp_port = device_config.get("smtp_port", 25)
+                # Проверяем уязвимости
+                results['vrfy_vulnerable'] = self._test_vrfy(ip, port)
+                results['expn_vulnerable'] = self._test_expn(ip, port)
+                results['rcpt_vulnerable'] = self._test_rcpt(ip, port)
+                break
 
+        return results['vrfy_vulnerable'] or results['expn_vulnerable'] or results['rcpt_vulnerable']
+
+    def _check_smtp_service(self, ip: str, port: int) -> bool:
+        """Проверяет, работает ли SMTP сервер на указанном порту"""
         try:
-            # Создаем соединение с SMTP сервером
-            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            sock.settimeout(5)
-            sock.connect((smtp_host, smtp_port))
-            response = sock.recv(1024).decode().strip()
-
-            if not response.startswith("220"):
-                print(f"[+] SMTP сервер {ip} не отвечает должным образом")
-                return False
-
-            # Тестируем команду VRFY
-            sock.send(b"VRFY root\r\n")
-            response = sock.recv(1024).decode().strip()
-            if response.startswith("250"):
-                print(f"[!] Уязвимость: SMTP сервер {ip} позволяет перечислять пользователей через VRFY")
-                return True
-
-            # Тестируем команду EXPN
-            sock.send(b"EXPN test\r\n")
-            response = sock.recv(1024).decode().strip()
-            if response.startswith("250"):
-                print(f"[!] Уязвимость: SMTP сервер {ip} позволяет перечислять пользователей через EXPN")
-                return True
-
-            # Тестируем команду RCPT (нужно начать с MAIL FROM)
-            sock.send(b"MAIL FROM: <test@example.com>\r\n")
-            sock.recv(1024)  # Пропускаем ответ
-
-            sock.send(b"RCPT TO: <root>\r\n")
-            response = sock.recv(1024).decode().strip()
-            if response.startswith("250"):
-                print(f"[!] Уязвимость: SMTP сервер {ip} позволяет перечислять пользователей через RCPT TO")
-                return True
-
-            print(f"[+] SMTP сервер устройства {ip} не позволяет перечислять пользователей")
+            with socket.create_connection((ip, port), timeout=self.timeout) as sock:
+                response = sock.recv(1024).decode().strip()
+                return response.startswith("220")
+        except (socket.timeout, ConnectionRefusedError, OSError):
             return False
 
-        except Exception as e:
-            print(f"[!] Ошибка при проверке SMTP сервера: {str(e)}")
-            return False
-        finally:
+    def _test_vrfy(self, ip: str, port: int) -> bool:
+        """Проверяет уязвимость VRFY"""
+        for user in self.COMMON_USERS:
             try:
-                sock.close()
-            except:
-                pass
+                with socket.create_connection((ip, port), timeout=self.timeout) as sock:
+                    sock.recv(1024)  # Читаем приветственное сообщение
+                    sock.send(f"VRFY {user}\r\n".encode())
+                    response = sock.recv(1024).decode().strip()
+
+                    if response.startswith("250") or "User unknown" not in response:
+                        print(f"[⚠️] Уязвимость VRFY обнаружена! Ответ сервера: {response}")
+                        return True
+            except Exception:
+                continue
+        return False
+
+    def _test_expn(self, ip: str, port: int) -> bool:
+        """Проверяет уязвимость EXPN"""
+        try:
+            with socket.create_connection((ip, port), timeout=self.timeout) as sock:
+                sock.recv(1024)
+                sock.send(b"EXPN test\r\n")
+                response = sock.recv(1024).decode().strip()
+
+                if response.startswith("250"):
+                    print(f"[⚠️] Уязвимость EXPN обнаружена! Ответ сервера: {response}")
+                    return True
+        except Exception:
+            pass
+        return False
+
+    def _test_rcpt(self, ip: str, port: int) -> bool:
+        """Проверяет уязвимость RCPT TO"""
+        for user in self.COMMON_USERS:
+            try:
+                with socket.create_connection((ip, port), timeout=self.timeout) as sock:
+                    sock.recv(1024)
+                    sock.send(b"MAIL FROM: <test@example.com>\r\n")
+                    sock.recv(1024)
+                    sock.send(f"RCPT TO: <{user}>\r\n".encode())
+                    response = sock.recv(1024).decode().strip()
+
+                    if response.startswith("250"):
+                        print(f"[⚠️] Уязвимость RCPT TO обнаружена для пользователя {user}! Ответ: {response}")
+                        return True
+            except Exception:
+                continue
+        return False
+
+    def append(self, device):
+        if device['mac'] in self.vulns:
+            self.vulns[device['mac']].append(SMTPUserEnumeration())
+        else:
+            self.vulns[device['mac']] = [SMTPUserEnumeration()]
+        print(self.vulns)
+        self.vulns[device['mac']][-1].ip = device['ip']
+        self.vulns[device['mac']][-1].type = device['тип']
 
     def check(self, devices):
         vulnerable_devices = {}
@@ -121,10 +163,7 @@ class SMTPUserEnumeration(Vulnerability):
         for i in devices:
             if i['type'] in [DeviceType.Camera, DeviceType.Printer]:
                 print('device', i['ip'], i['type'])
-                cur = self.check_for_device(i)
+                cur = self.check_for_device(i['ip'], i['mac'])
                 if cur:
-                    if i['mac'] in vulnerable_devices:
-                        vulnerable_devices[i['mac']].append(VulnerabilityType.SMTPUserEnumration)
-                    else:
-                        vulnerable_devices[i['mac']] = VulnerabilityType.SMTPUserEnumration
-        return vulnerable_devices
+                    self.append(i)
+        return self.vulns
